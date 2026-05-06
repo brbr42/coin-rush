@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Coin Rush</title>
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4955310415044750"
+       crossorigin="anonymous"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #0d0d1a;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Segoe UI', sans-serif;
+      touch-action: none;
+      overflow: hidden;
+    }
+
+    /* ===== 広告バナー ===== */
+    .ad-banner {
+      width: 100%;
+      max-width: 480px;
+      height: 60px;
+      background: #111122;
+      border: 1px dashed #2a4a7a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #3a7ad9;
+      font-size: 11px;
+      letter-spacing: 1px;
+    }
+
+    .game-wrapper {
+      position: relative;
+      width: 480px;
+      max-width: 100vw;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      image-rendering: pixelated;
+    }
+
+    /* ===== インタースティシャル広告 ===== */
+    .interstitial {
+      display: none;
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.92);
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 20;
+      gap: 16px;
+    }
+    .interstitial.show { display: flex; }
+
+    .ad-block {
+      width: 300px;
+      height: 250px;
+      background: #111122;
+      border: 1px dashed #3a7ad9;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #3a7ad9;
+      font-size: 12px;
+      gap: 8px;
+    }
+
+    .btn-close {
+      padding: 12px 36px;
+      background: #e94560;
+      color: #fff;
+      border: none;
+      border-radius: 30px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    .btn-close:disabled { opacity: 0.5; cursor: default; }
+    .btn-close:not(:disabled):hover { opacity: 0.85; }
+
+    .ad-note { color: #555; font-size: 11px; }
+  </style>
+</head>
+<body>
+
+<!-- ★ ここを AdSense コードに差し替え -->
+<div class="ad-banner">📢 広告スペース (320×50 / 468×60) — AdSense コードをここに挿入</div>
+
+<div class="game-wrapper">
+  <canvas id="c" width="480" height="320"></canvas>
+
+  <!-- ゲームオーバー時に表示するインタースティシャル広告 -->
+  <div class="interstitial" id="inters">
+    <!-- ★ ここを AdSense コードに差し替え -->
+    <div class="ad-block">
+      <span style="font-size:28px">📢</span>
+      広告スペース (300×250)<br>AdSense コードをここに挿入
+    </div>
+    <button class="btn-close" id="btnClose" disabled>閉じる（5）</button>
+    <span class="ad-note">広告を見るとゲームが続けられます</span>
+  </div>
+</div>
+
+<!-- ★ ここを AdSense コードに差し替え -->
+<div class="ad-banner">📢 広告スペース (320×50) — AdSense コードをここに挿入</div>
+
+<script>
+"use strict";
+
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+
+// ─── 定数 ──────────────────────────────────────────────
+const W = 480, H = 320;
+const GROUND_Y = 262;
+const C = {
+  bg0: '#0d0d1a', bg1: '#16213e',
+  ground: '#0f3060', groundLine: '#1a5090',
+  player: '#e94560', playerShine: 'rgba(255,255,255,0.2)',
+  obstacle: '#2ecc71', obstacleShade: '#27ae60',
+  bird: '#9b59b6', birdWing: '#8e44ad',
+  coin: '#ffd700', coinShine: '#fff8dc',
+  text: '#ffffff', score: '#ffd700',
+  star: '#ffffff',
+};
+
+// ─── ゲーム状態 ────────────────────────────────────────
+let state = 'start';   // start | playing | dead | gameover
+let frame = 0, score = 0, coins = 0;
+let speed = 4;
+let highScore = +localStorage.getItem('coinrush_hi') || 0;
+
+// ─── プレイヤー ────────────────────────────────────────
+const P = {
+  x: 72, y: GROUND_Y - 40, w: 30, h: 38,
+  vy: 0, gravity: 0.55, jumpF: -13,
+  jumps: 0, maxJumps: 2,
+  squishX: 1, squishY: 1,
+  trail: [],
+
+  reset() {
+    this.y = GROUND_Y - this.h;
+    this.vy = 0; this.jumps = 0;
+    this.squishX = this.squishY = 1;
+    this.trail = [];
+  },
+
+  jump() {
+    if (this.jumps >= this.maxJumps) return;
+    this.vy = this.jumpF;
+    this.jumps++;
+    this.squishX = 0.65; this.squishY = 1.35;
+  },
+
+  update() {
+    this.vy += this.gravity;
+    this.y  += this.vy;
+
+    if (this.y >= GROUND_Y - this.h) {
+      this.y = GROUND_Y - this.h;
+      if (this.vy > 2) { this.squishX = 1.4; this.squishY = 0.7; }
+      this.vy = 0; this.jumps = 0;
+    }
+
+    // スクワッシュ回復
+    this.squishX += (1 - this.squishX) * 0.18;
+    this.squishY += (1 - this.squishY) * 0.18;
+
+    // 残像
+    this.trail.push({ x: this.x + this.w/2, y: this.y + this.h/2, life: 1 });
+    if (this.trail.length > 7) this.trail.shift();
+    this.trail.forEach(t => t.life -= 0.14);
+  },
+
+  draw() {
+    // 残像
+    this.trail.forEach((t, i) => {
+      ctx.globalAlpha = t.life * 0.25;
+      ctx.fillStyle = C.player;
+      const r = (i / this.trail.length) * 10;
+      ctx.beginPath(); ctx.arc(t.x, t.y, r, 0, Math.PI*2); ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+
+    const cx = this.x + this.w/2, cy = this.y + this.h/2;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(this.squishX, this.squishY);
+
+    const hw = this.w/2, hh = this.h/2;
+
+    // 影
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath(); roundRect(-hw+2, -hh+2, this.w, this.h, 7); ctx.fill();
+
+    // 本体
+    ctx.fillStyle = C.player;
+    ctx.beginPath(); roundRect(-hw, -hh, this.w, this.h, 7); ctx.fill();
+
+    // ハイライト
+    ctx.fillStyle = C.playerShine;
+    ctx.beginPath(); roundRect(-hw+4, -hh+4, this.w*0.4, this.h*0.35, 4); ctx.fill();
+
+    // 目
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(hw*0.25, -hh*0.15, 5, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#1a1a2e';
+    ctx.beginPath(); ctx.arc(hw*0.25+1, -hh*0.15, 2.5, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(hw*0.25+2, -hh*0.15-1, 1, 0, Math.PI*2); ctx.fill();
+
+    ctx.restore();
+  },
+
+  box() {
+    return { x: this.x+5, y: this.y+5, w: this.w-10, h: this.h-8 };
+  }
+};
+
+// ─── 障害物 ────────────────────────────────────────────
+let obstacles = [], obsTimer = 0, obsInterval = 90;
+
+function spawnObs() {
+  const r = Math.random();
+  if (r < 0.45) {
+    // サボテン 1本
+    obstacles.push({ x: W+10, y: GROUND_Y-42, w: 28, h: 42, kind: 'c1' });
+  } else if (r < 0.75) {
+    // サボテン 2本
+    obstacles.push({ x: W+10, y: GROUND_Y-42, w: 24, h: 42, kind: 'c1' });
+    obstacles.push({ x: W+44, y: GROUND_Y-42, w: 24, h: 42, kind: 'c1' });
+  } else {
+    // 鳥
+    const by = 170 + Math.random() * 50;
+    obstacles.push({ x: W+10, y: by, w: 44, h: 22, kind: 'bird', base: by });
+  }
+}
+
+function updateObs() {
+  if (state !== 'playing') return;
+  obsTimer++;
+  if (obsTimer >= obsInterval) {
+    spawnObs(); obsTimer = 0;
+    obsInterval = Math.max(48, 90 - Math.floor(score / 15));
+  }
+  obstacles = obstacles.filter(o => o.x > -70);
+  obstacles.forEach(o => {
+    o.x -= speed;
+    if (o.kind === 'bird') o.y = o.base + Math.sin(frame * 0.06) * 22;
+  });
+}
+
+function drawObs(o) {
+  if (o.kind === 'c1') {
+    // 幹
+    ctx.fillStyle = C.obstacle;
+    ctx.beginPath(); roundRect(o.x, o.y, o.w, o.h, 4); ctx.fill();
+    // 枝左
+    ctx.fillStyle = C.obstacleShade;
+    ctx.fillRect(o.x - 9, o.y + 10, 11, 9);
+    ctx.fillRect(o.x - 9, o.y + 10, 4, 18);
+    // 枝右
+    ctx.fillRect(o.x + o.w - 2, o.y + 16, 11, 9);
+    ctx.fillRect(o.x + o.w + 5, o.y + 16, 4, 18);
+  } else {
+    // 鳥
+    ctx.fillStyle = C.bird;
+    ctx.beginPath();
+    ctx.ellipse(o.x + o.w/2, o.y + o.h/2, o.w/2, o.h/2, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    const flap = Math.sin(frame * 0.28) * 9;
+    ctx.fillStyle = C.birdWing;
+    ctx.beginPath();
+    ctx.ellipse(o.x + o.w/2 - 10, o.y + o.h/2 - flap, 14, 5, -0.4, 0, Math.PI*2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(o.x + o.w/2 + 10, o.y + o.h/2 - flap, 14, 5,  0.4, 0, Math.PI*2);
+    ctx.fill();
+
+    // くちばし
+    ctx.fillStyle = '#f39c12';
+    ctx.beginPath();
+    ctx.moveTo(o.x + o.w - 4, o.y + o.h/2);
+    ctx.lineTo(o.x + o.w + 10, o.y + o.h/2 + 2);
+    ctx.lineTo(o.x + o.w - 4, o.y + o.h/2 + 6);
+    ctx.fill();
+  }
+}
+
+// ─── コイン ────────────────────────────────────────────
+let coinItems = [], coinTimer = 0;
+
+function spawnCoins() {
+  const ys = [190, 220, GROUND_Y - 20];
+  const y   = ys[Math.floor(Math.random() * ys.length)];
+  const num = Math.floor(Math.random() * 4) + 1;
+  for (let i = 0; i < num; i++) {
+    coinItems.push({
+      x: W + 10 + i * 32, y,
+      r: 10, phase: Math.random() * Math.PI * 2,
+      angle: 0, done: false
+    });
+  }
+}
+
+function updateCoins() {
+  if (state !== 'playing') return;
+  coinTimer++;
+  if (coinTimer >= 55) { spawnCoins(); coinTimer = 0; }
+
+  coinItems = coinItems.filter(c => c.x > -20 && !c.done);
+  coinItems.forEach(c => {
+    c.x -= speed;
+    c.angle += 0.06;
+    c.phase += 0.05;
+    c.y += Math.sin(c.phase) * 0.4;
+  });
+}
+
+function drawCoin(c) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+
+  // グロー
+  const g = ctx.createRadialGradient(0,0,0,0,0,c.r*2);
+  g.addColorStop(0, 'rgba(255,215,0,0.35)');
+  g.addColorStop(1, 'rgba(255,215,0,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(0, 0, c.r*2, 0, Math.PI*2); ctx.fill();
+
+  // コイン本体（回転錯覚）
+  ctx.scale(Math.abs(Math.cos(c.angle)), 1);
+  ctx.fillStyle = C.coin;
+  ctx.beginPath(); ctx.arc(0, 0, c.r, 0, Math.PI*2); ctx.fill();
+
+  ctx.fillStyle = C.coinShine;
+  ctx.beginPath(); ctx.arc(-c.r*0.2, -c.r*0.3, c.r*0.35, 0, Math.PI*2); ctx.fill();
+
+  ctx.restore();
+}
+
+// ─── パーティクル ──────────────────────────────────────
+let particles = [];
+
+function burst(x, y, color, n=6) {
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    particles.push({
+      x, y,
+      vx: Math.cos(a) * (2 + Math.random() * 2),
+      vy: Math.sin(a) * (2 + Math.random() * 2) - 1,
+      r: 4 + Math.random() * 3,
+      life: 1, color
+    });
+  }
+}
+
+function updateParticles() {
+  particles = particles.filter(p => p.life > 0);
+  particles.forEach(p => {
+    p.x += p.vx; p.y += p.vy; p.vy += 0.12;
+    p.life -= 0.04; p.r *= 0.94;
+  });
+}
+
+function drawParticles() {
+  particles.forEach(p => {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
+
+// ─── 背景（視差スクロール）─────────────────────────────
+const STARS = Array.from({length: 60}, () => ({
+  x: Math.random() * W,
+  y: Math.random() * (GROUND_Y - 20),
+  r: Math.random() * 1.5 + 0.3,
+  speed: Math.random() * 0.4 + 0.1,
+  a: Math.random() * 0.6 + 0.2,
+}));
+
+function drawBG() {
+  // グラデーション空
+  const g = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+  g.addColorStop(0, C.bg0); g.addColorStop(1, C.bg1);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, GROUND_Y);
+
+  // 星
+  STARS.forEach(s => {
+    s.x -= s.speed * (speed / 4);
+    if (s.x < 0) s.x = W;
+    ctx.globalAlpha = s.a * (0.6 + Math.sin(frame * 0.02 + s.x) * 0.4);
+    ctx.fillStyle = C.star;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2); ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
+
+function drawGround() {
+  ctx.fillStyle = C.ground;
+  ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y);
+
+  ctx.fillStyle = C.groundLine;
+  ctx.fillRect(0, GROUND_Y, W, 3);
+
+  // タイル線
+  const tw = 48;
+  const off = (frame * speed * 0.3) % tw;
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  ctx.lineWidth = 1;
+  for (let x = -off; x < W; x += tw) {
+    ctx.beginPath(); ctx.moveTo(x, GROUND_Y); ctx.lineTo(x, H); ctx.stroke();
+  }
+}
+
+// ─── HUD ───────────────────────────────────────────────
+function drawHUD() {
+  ctx.textAlign = 'left';
+  ctx.fillStyle = C.score;
+  ctx.font = 'bold 22px monospace';
+  ctx.fillText(`${score}m`, 14, 30);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.45)';
+  ctx.font = '12px monospace';
+  ctx.fillText(`BEST ${highScore}m`, 14, 48);
+
+  ctx.textAlign = 'right';
+  ctx.fillStyle = C.coin;
+  ctx.font = 'bold 18px monospace';
+  ctx.fillText(`\u{1FA99} ${coins}`, W - 14, 30);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.font = '11px monospace';
+  ctx.fillText(`${(speed * 10).toFixed(0)} km/h`, W - 14, 48);
+}
+
+// ─── 各種オーバーレイ ──────────────────────────────────
+function drawOverlay(color, alpha) {
+  ctx.fillStyle = color; ctx.globalAlpha = alpha;
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = 1;
+}
+
+function drawStartScreen() {
+  drawOverlay('#000', 0.55);
+  ctx.textAlign = 'center';
+
+  ctx.fillStyle = C.score;
+  ctx.font = 'bold 40px monospace';
+  ctx.fillText('COIN RUSH', W/2, 108);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.75)';
+  ctx.font = '14px monospace';
+  ctx.fillText('タップ / スペースキー でジャンプ', W/2, 148);
+  ctx.fillText('2回まで連続ジャンプ可能！', W/2, 170);
+
+  if (frame % 60 < 38) {
+    ctx.fillStyle = '#e94560';
+    ctx.font = 'bold 19px monospace';
+    ctx.fillText('▶  タップしてスタート', W/2, 224);
+  }
+
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.font = '12px monospace';
+  ctx.fillText(`ハイスコア: ${highScore}m`, W/2, 278);
+}
+
+function drawGameOverScreen() {
+  drawOverlay('#000', 0.68);
+  ctx.textAlign = 'center';
+
+  ctx.fillStyle = '#e94560';
+  ctx.font = 'bold 34px monospace';
+  ctx.fillText('GAME OVER', W/2, 98);
+
+  ctx.fillStyle = C.score;
+  ctx.font = 'bold 28px monospace';
+  ctx.fillText(`${score}m`, W/2, 143);
+
+  ctx.fillStyle = C.coin;
+  ctx.font = '16px monospace';
+  ctx.fillText(`\u{1FA99} ${coins} コイン獲得`, W/2, 172);
+
+  if (score >= highScore) {
+    ctx.fillStyle = '#ffd700';
+    ctx.font = 'bold 17px monospace';
+    ctx.fillText('🏆 NEW RECORD!', W/2, 200);
+  } else {
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.font = '13px monospace';
+    ctx.fillText(`ベスト: ${highScore}m`, W/2, 200);
+  }
+
+  if (frame % 60 < 38) {
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 16px monospace';
+    ctx.fillText('タップしてリスタート', W/2, 256);
+  }
+}
+
+// ─── 衝突判定 ──────────────────────────────────────────
+function collide() {
+  const pb = P.box();
+
+  for (const o of obstacles) {
+    if (pb.x < o.x + o.w - 4 &&
+        pb.x + pb.w > o.x + 4 &&
+        pb.y < o.y + o.h - 4 &&
+        pb.y + pb.h > o.y + 4) return true;
+  }
+
+  coinItems.forEach(c => {
+    if (c.done) return;
+    const dx = c.x - (pb.x + pb.w/2);
+    const dy = c.y - (pb.y + pb.h/2);
+    if (dx*dx + dy*dy < (c.r + 15) ** 2) {
+      c.done = true; coins++;
+      burst(c.x, c.y, C.coin);
+    }
+  });
+
+  return false;
+}
+
+// ─── リセット ──────────────────────────────────────────
+function reset() {
+  score = 0; coins = 0; speed = 4; frame = 0;
+  obstacles = []; coinItems = []; particles = [];
+  obsTimer = 0; obsInterval = 90; coinTimer = 0;
+  P.reset();
+}
+
+// ─── インタースティシャル広告 ──────────────────────────
+const inters  = document.getElementById('inters');
+const btnClose = document.getElementById('btnClose');
+let deathCount = 0;
+
+function showInterstitial(cb) {
+  deathCount++;
+  // 3回に1回だけ表示
+  if (deathCount % 3 !== 0) { cb(); return; }
+
+  inters.classList.add('show');
+  let t = 5;
+  btnClose.disabled = true;
+  btnClose.textContent = `閉じる（${t}）`;
+
+  const iv = setInterval(() => {
+    t--;
+    btnClose.textContent = t > 0 ? `閉じる（${t}）` : '閉じる';
+    if (t <= 0) { clearInterval(iv); btnClose.disabled = false; }
+  }, 1000);
+
+  btnClose.onclick = () => {
+    inters.classList.remove('show');
+    cb();
+  };
+}
+
+// ─── 入力ハンドラ ──────────────────────────────────────
+function handleInput() {
+  if (state === 'start')    { state = 'playing'; reset(); }
+  else if (state === 'playing') P.jump();
+  else if (state === 'gameover') { state = 'playing'; reset(); }
+}
+
+document.addEventListener('keydown', e => {
+  if (['Space','ArrowUp','KeyW'].includes(e.code)) { e.preventDefault(); handleInput(); }
+});
+canvas.addEventListener('pointerdown', e => { e.preventDefault(); handleInput(); });
+
+// ─── メインループ ──────────────────────────────────────
+function loop() {
+  requestAnimationFrame(loop);
+  frame++;
+
+  drawBG();
+  drawGround();
+
+  if (state === 'playing') {
+    score = Math.floor(frame / 6);
+    speed = 4 + Math.floor(score / 60) * 0.4;
+
+    P.update(); updateObs(); updateCoins(); updateParticles();
+
+    if (collide()) {
+      state = 'dead';
+      burst(P.x + P.w/2, P.y + P.h/2, C.player, 14);
+      if (score > highScore) { highScore = score; localStorage.setItem('coinrush_hi', highScore); }
+      showInterstitial(() => { state = 'gameover'; });
+    }
+
+    coinItems.forEach(drawCoin);
+    obstacles.forEach(drawObs);
+    P.draw(); drawParticles(); drawHUD();
+
+  } else if (state === 'start') {
+    P.draw(); drawHUD(); drawStartScreen();
+
+  } else if (state === 'dead') {
+    coinItems.forEach(drawCoin);
+    obstacles.forEach(drawObs);
+    P.draw(); drawParticles(); drawHUD();
+
+  } else if (state === 'gameover') {
+    obstacles.forEach(drawObs);
+    P.draw(); drawHUD(); drawGameOverScreen();
+  }
+}
+
+// ─── ユーティリティ ────────────────────────────────────
+function roundRect(x, y, w, h, r) {
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x+w, y,   x+w, y+r);
+  ctx.lineTo(x+w, y+h-r);
+  ctx.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+  ctx.lineTo(x+r, y+h);
+  ctx.quadraticCurveTo(x, y+h, x, y+h-r);
+  ctx.lineTo(x, y+r);
+  ctx.quadraticCurveTo(x, y, x+r, y);
+}
+
+loop();
+</script>
+</body>
+</html>
